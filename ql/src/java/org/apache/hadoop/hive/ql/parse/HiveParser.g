@@ -1913,26 +1913,6 @@ createViewStatement
         )
     ;
 
-createMaterializedViewStatement
-@init {
-    pushMsg("create materialized view statement", state);
-}
-@after { popMsg(state); }
-    : KW_CREATE KW_MATERIALIZED KW_VIEW (ifNotExists)? name=tableName
-        rewriteDisabled? tableComment? tableRowFormat? tableFileFormat? tableLocation?
-        tablePropertiesPrefixed? KW_AS selectStatementWithCTE
-    -> ^(TOK_CREATE_MATERIALIZED_VIEW $name
-         ifNotExists?
-         rewriteDisabled?
-         tableComment?
-         tableRowFormat?
-         tableFileFormat?
-         tableLocation?
-         tablePropertiesPrefixed?
-         selectStatementWithCTE
-        )
-    ;
-
 viewPartition
 @init { pushMsg("view partition specification", state); }
 @after { popMsg(state); }
@@ -1944,6 +1924,27 @@ dropViewStatement
 @init { pushMsg("drop view statement", state); }
 @after { popMsg(state); }
     : KW_DROP KW_VIEW ifExists? viewName -> ^(TOK_DROPVIEW viewName ifExists?)
+    ;
+
+createMaterializedViewStatement
+@init {
+    pushMsg("create materialized view statement", state);
+}
+@after { popMsg(state); }
+    : KW_CREATE KW_MATERIALIZED KW_VIEW (ifNotExists)? name=tableName
+        rewriteDisabled? tableComment? tableRowFormat? tableFileFormat? tableLocation?
+        viewPartition? tablePropertiesPrefixed? KW_AS selectStatementWithCTE
+    -> ^(TOK_CREATE_MATERIALIZED_VIEW $name
+         ifNotExists?
+         rewriteDisabled?
+         tableComment?
+         tableRowFormat?
+         tableFileFormat?
+         tableLocation?
+         viewPartition?
+         tablePropertiesPrefixed?
+         selectStatementWithCTE
+        )
     ;
 
 dropMaterializedViewStatement
