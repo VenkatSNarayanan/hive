@@ -195,6 +195,7 @@ import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hive.common.util.TxnIdUtils;
+import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -438,6 +439,7 @@ public class Hive {
    */
   private Hive(HiveConf c, boolean doRegisterAllFns) throws HiveException {
     conf = c;
+    
     if (doRegisterAllFns) {
       registerAllFunctionsOnce();
     }
@@ -4281,8 +4283,7 @@ private void constructOneLBLocationMap(FileStatus fSta,
   }
 
   /**
-   * Creates a metastore client. Currently it creates only JDBC based client as
-   * File based store support is removed
+   * Creates a metastore client using a factory specified via HiveConf.
    *
    * @returns a Meta Store Client
    * @throws HiveMetaException
@@ -4300,12 +4301,8 @@ private void constructOneLBLocationMap(FileStatus fSta,
       }
     };
 
-    if (conf.getBoolVar(ConfVars.METASTORE_FASTPATH)) {
-      return new SessionHiveMetaStoreClient(conf, hookLoader, allowEmbedded);
-    } else {
-      return RetryingMetaStoreClient.getProxy(conf, hookLoader, metaCallTimeMap,
-          SessionHiveMetaStoreClient.class.getName(), allowEmbedded);
-    }
+    HiveMetaStoreClientFactory factory = createMetaStoreClientFactory();
+    return factory.createMetaStoreClient(conf, hookLoader, allowEmbedded, metaCallTimeMap);
   }
 
   @Nullable
@@ -4324,6 +4321,24 @@ private void constructOneLBLocationMap(FileStatus fSta,
     }
   }
 
+  private HiveMetaStoreClientFactory createMetaStoreClientFactory() throws MetaException {
+    String metaStoreClientFactoryClassName = 
+        conf.getVar(HiveConf.ConfVars.METASTORE_CLIENT_FACTORY_CLASS);
+    
+    try {
+      Class<? extends HiveMetaStoreClientFactory> factoryClass = 
+          conf.getClassByName(metaStoreClientFactoryClassName)
+          .asSubclass(HiveMetaStoreClientFactory.class);
+      return ReflectionUtils.newInstance(factoryClass, conf);
+    } catch (Exception e) {
+      String errorMessage = String.format(
+          "Unable to instantiate a metastore client factory %s due to: %s",
+          metaStoreClientFactoryClassName, e);
+      LOG.error(errorMessage, e);
+      throw new MetaException(errorMessage);
+    }
+  }
+  
   public static class SchemaException extends MetaException {
     private static final long serialVersionUID = 1L;
     public SchemaException(String message) {

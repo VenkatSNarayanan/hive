@@ -637,6 +637,9 @@ public class HiveConf extends Configuration {
     // Metastore stuff. Be sure to update HiveConf.metaVars when you add something here!
     METASTOREDBTYPE("hive.metastore.db.type", "DERBY", new StringSet("DERBY", "ORACLE", "MYSQL", "MSSQL", "POSTGRES"),
         "Type of database used by the metastore. Information schema & JDBCStorageHandler depend on it."),
+    METASTORE_CLIENT_FACTORY_CLASS("hive.metastore.client.factory.class",
+            "org.apache.hadoop.hive.ql.metadata.SessionHiveMetaStoreClientFactory",
+            "The name of the factory class that produces objects implementing the IMetaStoreClient interface."),
     /**
      * @deprecated Use MetastoreConf.WAREHOUSE
      */
