@@ -18,8 +18,15 @@
  */
 package org.apache.hive.hcatalog.common;
 
+import java.io.Closeable;
 import java.io.IOException;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.util.Arrays;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -30,6 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.security.auth.login.LoginException;
 
+import com.google.common.collect.ImmutableSet;
 import org.apache.commons.lang.builder.EqualsBuilder;
 import org.apache.commons.lang.builder.HashCodeBuilder;
 import org.apache.hadoop.hive.common.classification.InterfaceAudience;
@@ -39,6 +47,7 @@ import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.RetryingMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.annotation.NoReconnect;
+import org.apache.hadoop.hive.ql.metadata.HiveUtils;
 import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.hive.shims.Utils;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -90,7 +99,8 @@ class HiveClientCache {
   }
 
   public static IMetaStoreClient getNonCachedHiveMetastoreClient(HiveConf hiveConf) throws MetaException {
-    return RetryingMetaStoreClient.getProxy(hiveConf, true);
+    //return RetryingMetaStoreClient.getProxy(hiveConf, true);
+    return HiveUtils.createMetaStoreClient(hiveConf, true, new ConcurrentHashMap());
   }
 
   public HiveClientCache(HiveConf hiveConf) {
@@ -275,7 +285,24 @@ class HiveClientCache {
         cacheableHiveMetaStoreClient.acquire();
       }
     }
-    return cacheableHiveMetaStoreClient;
+    return (IMetaStoreClient)cacheableHiveMetaStoreClient;
+  }
+
+  private static Class<?>[] getAllInterfaces(Class<?>... classes) {
+    ImmutableSet.Builder<Class<?>> builder = ImmutableSet.builder();
+    Class[] classArray = classes;
+    int length = classes.length;
+
+    for(int i = 0; i < length; ++i) {
+      Class<?> element = classArray[i];
+      if (element.isInterface()) {
+        builder.add(element);
+      } else {
+        builder.addAll(Arrays.asList(element.getInterfaces()));
+      }
+    }
+
+    return (Class[])builder.build().toArray(new Class[0]);
   }
 
   /**
@@ -289,17 +316,12 @@ class HiveClientCache {
   private ICacheableMetaStoreClient getOrCreate(final HiveClientCacheKey cacheKey)
       throws IOException, MetaException, LoginException {
     try {
-      return hiveCache.get(cacheKey, new Callable<ICacheableMetaStoreClient>() {
-        @Override
-        public ICacheableMetaStoreClient call() throws MetaException {
-          // This is called from HCat, so always allow embedded metastore (as was the default).
-          return
-              (ICacheableMetaStoreClient) RetryingMetaStoreClient.getProxy(cacheKey.getHiveConf(),
-                  new Class<?>[]{HiveConf.class, Integer.class, Boolean.class},
-                  new Object[]{cacheKey.getHiveConf(), timeout, true},
-                  CacheableHiveMetaStoreClient.class.getName());
-        }
-      });
+       return (ICacheableMetaStoreClient)this.hiveCache.get(cacheKey, new Callable<ICacheableMetaStoreClient>() {
+                public ICacheableMetaStoreClient call() throws MetaException {
+                    IMetaStoreClient metaStoreClient = HiveClientCache.getNonCachedHiveMetastoreClient(cacheKey.getHiveConf());
+                    return (ICacheableMetaStoreClient) Proxy.newProxyInstance(HiveClientCache.class.getClassLoader(), HiveClientCache.getAllInterfaces(IMetaStoreClient.class, CacheableHiveMetaStoreClient.class), new CacheableHiveMetaStoreClient(metaStoreClient));
+                }
+            });
     } catch (ExecutionException e) {
       Throwable t = e.getCause();
       if (t instanceof IOException) {
@@ -368,7 +390,7 @@ class HiveClientCache {
   }
 
   @InterfaceAudience.Private
-  public interface ICacheableMetaStoreClient extends IMetaStoreClient {
+  public interface ICacheableMetaStoreClient extends Closeable {
     @NoReconnect
     void acquire();
 
@@ -398,15 +420,18 @@ class HiveClientCache {
   /**
    * Add # of current users on HiveMetaStoreClient, so that the client can be cleaned when no one is using it.
    */
-  static class CacheableHiveMetaStoreClient extends HiveMetaStoreClient implements ICacheableMetaStoreClient {
+  static class CacheableHiveMetaStoreClient implements InvocationHandler, ICacheableMetaStoreClient {
 
     private final AtomicInteger users = new AtomicInteger(0);
+
+    private static final ImmutableSet<Method> CLOSE_METHODS;
+    private static final String CLOSE_METHOD_NAME = "close";
     private volatile boolean expiredFromCache = false;
+    private final IMetaStoreClient base;
     private boolean isClosed = false;
 
-    CacheableHiveMetaStoreClient(final HiveConf conf, final Integer timeout, Boolean allowEmbedded)
-        throws MetaException {
-      super(conf, null, allowEmbedded);
+    CacheableHiveMetaStoreClient(IMetaStoreClient base) {
+      this.base = base;
     }
 
     /**
@@ -468,7 +493,7 @@ class HiveClientCache {
     public boolean isOpen() {
       try {
         // Look for an unlikely database name and see if either MetaException or TException is thrown
-        super.getDatabases("NonExistentDatabaseUsedForHealthCheck");
+        this.base.getDatabases("NonExistentDatabaseUsedForHealthCheck");
       } catch (TException e) {
         return false;
       }
@@ -507,7 +532,7 @@ class HiveClientCache {
     public void tearDown() {
       try {
         if (!isClosed) {
-          super.close();
+          this.base.close();
         }
         isClosed = true;
       } catch (Exception e) {
@@ -536,6 +561,29 @@ class HiveClientCache {
         this.tearDown();
       } finally {
         super.finalize();
+      }
+    }
+
+    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+      try {
+        if (method.getDeclaringClass().isAssignableFrom(this.getClass())) {
+          return method.invoke(this, args);
+        } else if (CLOSE_METHODS.contains(method)) {
+          this.close();
+          return null;
+        } else {
+          return method.invoke(this.base, args);
+        }
+      } catch (InvocationTargetException var5) {
+        throw var5.getCause();
+      }
+    }
+
+    static {
+      try {
+        CLOSE_METHODS = ImmutableSet.of(AutoCloseable.class.getMethod("close"), Closeable.class.getMethod("close"), IMetaStoreClient.class.getMethod("close"), ICacheableMetaStoreClient.class.getMethod("close"));
+      } catch (NoSuchMethodException e) {
+        throw new RuntimeException(e);
       }
     }
   }

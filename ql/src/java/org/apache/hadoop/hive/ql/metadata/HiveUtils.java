@@ -20,7 +20,13 @@ package org.apache.hadoop.hive.ql.metadata;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.hadoop.hive.metastore.HiveMetaHook;
+import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;
+import org.apache.hadoop.hive.metastore.IMetaStoreClient;
+import org.apache.hadoop.hive.metastore.api.MetaException;
+import org.apache.hadoop.hive.metastore.api.Table;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -436,6 +442,38 @@ public final class HiveUtils {
       return dbName.toLowerCase() + ".*";
     } else {
       return dbName.toLowerCase() + "." + tableName.toLowerCase();
+    }
+  }
+
+  public static IMetaStoreClient createMetaStoreClient(final HiveConf conf, boolean allowEmbedded, ConcurrentHashMap<String, Long> metaCallTimeMap) throws MetaException {
+    HiveMetaHookLoader hookLoader = new HiveMetaHookLoader() {
+      public HiveMetaHook getHook(Table tbl) throws MetaException {
+        try {
+          if (tbl == null) {
+            return null;
+          } else {
+            HiveStorageHandler storageHandler = HiveUtils.getStorageHandler(conf, (String)tbl.getParameters().get("storage_handler"));
+            return storageHandler == null ? null : storageHandler.getMetaHook();
+          }
+        } catch (HiveException var3) {
+          HiveUtils.LOG.error(StringUtils.stringifyException(var3));
+          throw new MetaException("Failed to load storage handler:  " + var3.getMessage());
+        }
+      }
+    };
+    return createMetaStoreClientFactory(conf).createMetaStoreClient(conf, hookLoader, allowEmbedded, metaCallTimeMap);
+  }
+
+  private static HiveMetaStoreClientFactory createMetaStoreClientFactory(HiveConf conf) throws MetaException {
+    String metaStoreClientFactoryClassName = conf.getVar(HiveConf.ConfVars.METASTORE_CLIENT_FACTORY_CLASS);
+
+    try {
+      Class<? extends HiveMetaStoreClientFactory> factoryClass = conf.getClassByName(metaStoreClientFactoryClassName).asSubclass(HiveMetaStoreClientFactory.class);
+      return (HiveMetaStoreClientFactory)ReflectionUtils.newInstance(factoryClass, conf);
+    } catch (Exception e) {
+      String errorMessage = String.format("Unable to instantiate a metastore client factory %s due to: %s", metaStoreClientFactoryClassName, e);
+      LOG.error(errorMessage, e);
+      throw new MetaException(errorMessage);
     }
   }
 }

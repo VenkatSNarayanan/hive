@@ -167,7 +167,7 @@ public class TestHiveClientCache {
   /**
    * Test that a long table name actually breaks the HMSC. Subsequently check that isOpen() reflects
    * and tells if the client is broken
-   */
+   *//*
   @Ignore("hangs indefinitely")
   @Test
   public void testHMSCBreakability() throws IOException, MetaException, LoginException, TException, AlreadyExistsException,
@@ -215,7 +215,7 @@ public class TestHiveClientCache {
 
     assertFalse(client.isOpen());
     metaServer.shutDown();
-  }
+  }*/
 
   private static class LocalMetaServer implements Runnable {
     public final int MS_PORT = 20101;
