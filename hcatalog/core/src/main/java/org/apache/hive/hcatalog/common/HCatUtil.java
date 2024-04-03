@@ -41,6 +41,7 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
@@ -63,6 +64,7 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapreduce.JobContext;
+import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.delegation.AbstractDelegationTokenIdentifier;
 import org.apache.hadoop.util.ReflectionUtils;
@@ -76,6 +78,7 @@ import org.apache.hive.hcatalog.mapreduce.InputJobInfo;
 import org.apache.hive.hcatalog.mapreduce.OutputJobInfo;
 import org.apache.hive.hcatalog.mapreduce.PartInfo;
 import org.apache.hive.hcatalog.mapreduce.StorerInfo;
+import org.apache.hive.hcatalog.mapreduce.s3.commit.magic.MagicS3GuardCommitter;
 import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -755,6 +758,20 @@ public class HCatUtil {
         logger.warn(msg);
       }
       throw new IllegalArgumentException(msg);
+    }
+  }
+
+  public static String getCommitterWorkPath(Path outputPath, TaskAttemptContext context) throws IOException {
+    String className = context.getConfiguration().get("mapred.output.committer.class");
+    try {
+      Class committerClass = Class.forName(className);
+      if (committerClass == MagicS3GuardCommitter.class) {
+        return new MagicS3GuardCommitter(outputPath, context).getWorkPath().toString();
+      } else {
+        return new org.apache.hadoop.mapreduce.lib.output.FileOutputCommitter(outputPath, context).getWorkPath().toString();
+      }
+    } catch (ClassNotFoundException e) {
+      throw new IOException("Could not load configured mapred.output.committer.class", e);
     }
   }
 }

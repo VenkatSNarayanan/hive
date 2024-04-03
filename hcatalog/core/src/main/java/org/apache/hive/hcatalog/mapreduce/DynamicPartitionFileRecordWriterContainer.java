@@ -25,7 +25,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.permission.FsAction;
+import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.fs.s3a.commit.CommitUtils;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.serde2.AbstractSerDe;
 import org.apache.hadoop.hive.serde2.SerDeException;
@@ -37,11 +41,11 @@ import org.apache.hadoop.mapred.RecordWriter;
 import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.OutputCommitter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
-import org.apache.hadoop.mapreduce.lib.output.FileOutputCommitter;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hive.hcatalog.common.ErrorType;
 import org.apache.hive.hcatalog.common.HCatException;
+import org.apache.hive.hcatalog.common.HCatUtil;
 import org.apache.hive.hcatalog.data.HCatRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -123,6 +127,11 @@ class DynamicPartitionFileRecordWriterContainer extends FileRecordWriterContaine
           OutputCommitter dynCommitter = baseDynamicCommitters.get(dynKey);
           if (dynCommitter.needsTaskCommit(dynContext)) {
             dynCommitter.commitTask(dynContext);
+            String touchDir = dynContext.getConfiguration().get("mapred.touch.dir", null);
+            if (touchDir != null) { //If dynamic partitions with custom patterns on S3, we need to create partition indicators
+              FileSystem fs = CommitUtils.getS3AFileSystem(new Path(touchDir), dynContext.getConfiguration(), true);
+              fs.mkdirs(new Path(touchDir), new FsPermission(FsAction.ALL, FsAction.ALL, FsAction.ALL)); //need to check what permissions are actually needed
+            }
           }
           else {
             LOG.info("Skipping commitTask() for " + outputJobInfo.getLocation());
@@ -200,9 +209,8 @@ class DynamicPartitionFileRecordWriterContainer extends FileRecordWriterContaine
 
       // Set temp location.
       currTaskContext.getConfiguration().set(
-          "mapred.work.output.dir",
-          new FileOutputCommitter(new Path(localJobInfo.getLocation()), currTaskContext)
-              .getWorkPath().toString());
+              "mapred.work.output.dir",
+              HCatUtil.getCommitterWorkPath(new Path(localJobInfo.getLocation()), currTaskContext));
 
       // Set up task.
       baseOutputCommitter.setupTask(currTaskContext);

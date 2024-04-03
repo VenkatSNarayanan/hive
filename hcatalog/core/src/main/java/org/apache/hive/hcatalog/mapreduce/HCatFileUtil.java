@@ -31,8 +31,7 @@ public class HCatFileUtil {
 
   // regex of the form: ${column name}. Following characters are not allowed in column name:
   // whitespace characters, /, {, }, \
-  private static final Pattern customPathPattern = Pattern.compile("(\\$\\{)([^\\s/\\{\\}\\\\]+)(\\})");
-
+  public static final Pattern customPathPattern = Pattern.compile("(\\$\\{)([^\\s/\\{\\}\\\\]+)(\\})");
   // This method parses the custom dynamic path and replaces each occurrence
   // of column name within regex pattern with its corresponding value, if provided
   public static String resolveCustomPath(OutputJobInfo jobInfo,
