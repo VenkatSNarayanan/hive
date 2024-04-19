@@ -155,8 +155,17 @@
             <groupId>commmons-logging</groupId>
             <artifactId>commons-logging</artifactId>
           </exclusion>
+               <exclusion>
+                   <groupId>org.glassfish</groupId>
+                   <artifactId>javax.el</artifactId>
+               </exclusion>
       </exclusions>
     </dependency>
+      <dependency>
+          <groupId>org.glassfish</groupId>
+          <artifactId>javax.el</artifactId>
+          <version>3.0.1-b06</version>
+      </dependency>
     <dependency>
       <groupId>org.apache.hbase</groupId>
       <artifactId>hbase-mapreduce</artifactId>
