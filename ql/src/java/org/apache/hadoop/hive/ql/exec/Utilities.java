@@ -3603,7 +3603,7 @@ public final class Utilities {
 
       if (op instanceof FileSinkOperator) {
         FileSinkDesc fdesc = ((FileSinkOperator) op).getConf();
-        if (fdesc.isMmTable()) {
+        if (fdesc.isMmTable() || fdesc.getHasOutputCommitter()) {
           continue; // No need to create for MM tables
         }
         Path tempDir = fdesc.getDirName();

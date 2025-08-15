@@ -33,19 +33,20 @@ import org.apache.hadoop.hive.serde2.AbstractSerDe;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableComparable;
+import org.apache.hadoop.mapred.FileAlreadyExistsException;
 import org.apache.hadoop.mapred.FileOutputFormat;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.OutputCommitter;
 import org.apache.hadoop.mapreduce.RecordWriter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
-import org.apache.hadoop.mapreduce.lib.output.FileOutputCommitter;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hive.hcatalog.common.ErrorType;
 import org.apache.hive.hcatalog.common.HCatConstants;
 import org.apache.hive.hcatalog.common.HCatException;
 import org.apache.hive.hcatalog.common.HCatUtil;
 import org.apache.hive.hcatalog.data.HCatRecord;
+import org.apache.hive.hcatalog.mapreduce.s3.commit.magic.MagicS3GuardCommitter;
 import org.apache.thrift.TException;
 
 import java.io.IOException;
@@ -132,7 +133,20 @@ class FileOutputFormatContainer extends OutputFormatContainer {
 
     if (!jobInfo.isDynamicPartitioningUsed()) {
       JobConf jobConf = new JobConf(context.getConfiguration());
-      getBaseOutputFormat().checkOutputSpecs(null, jobConf);
+      try {
+        getBaseOutputFormat().checkOutputSpecs(null, jobConf);
+      }
+      catch (FileAlreadyExistsException e) {
+        String className = context.getConfiguration().get("mapred.output.committer.class");
+        try {
+          Class committerClass = Class.forName(className);
+          if (committerClass != org.apache.hadoop.fs.s3a.commit.magic.mapred.MagicS3GuardCommitter.class) { //magic committer's output location will already exist
+            throw e;
+          }
+        } catch (ClassNotFoundException cnfe) {
+          throw new IOException("Could not load configured mapred.output.committer.class", cnfe);
+        }
+      }
       //checkoutputspecs might've set some properties we need to have context reflect that
       HCatUtil.copyConf(jobConf, context.getConfiguration());
     }
@@ -246,8 +260,8 @@ class FileOutputFormatContainer extends OutputFormatContainer {
     String outputPath = context.getConfiguration().get("mapred.output.dir");
     //we need to do this to get the task path and set it for mapred implementation
     //since it can't be done automatically because of mapreduce->mapred abstraction
-    if (outputPath != null)
-      context.getConfiguration().set("mapred.work.output.dir",
-        new FileOutputCommitter(new Path(outputPath), context).getWorkPath().toString());
+    if (outputPath != null) {
+      context.getConfiguration().set("mapred.work.output.dir", HCatUtil.getCommitterWorkPath(new Path(outputPath), context));
+    }
   }
 }

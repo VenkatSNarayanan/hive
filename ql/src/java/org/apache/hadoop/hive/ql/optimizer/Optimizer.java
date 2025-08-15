@@ -236,6 +236,11 @@ public class Optimizer {
       transformations.add(new TablePropertyEnrichmentOptimizer());
     }
 
+    //add S3 magic transformation here to set paths appropriately
+    if (HiveConf.getBoolVar(hiveConf, HiveConf.ConfVars.HIVE_BLOBSTORE_USE_OUTPUTCOMMITTER)) {
+      transformations.add(new S3AOptimizer());
+    }
+
   }
 
   /**

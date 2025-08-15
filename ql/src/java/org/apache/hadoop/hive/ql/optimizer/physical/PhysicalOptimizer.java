@@ -98,6 +98,10 @@ public class PhysicalOptimizer {
     if (pctx.getContext().getExplainAnalyze() != null) {
       resolvers.add(new AnnotateRunTimeStatsOptimizer());
     }
+
+    if (hiveConf.getBoolVar(HiveConf.ConfVars.HIVE_BLOBSTORE_USE_OUTPUTCOMMITTER)) {
+      resolvers.add(new PathOutputCommitterResolver());
+    }
   }
 
   /**

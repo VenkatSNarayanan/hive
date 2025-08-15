@@ -20,6 +20,7 @@
 package org.apache.hive.hcatalog.mapreduce;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -31,8 +32,7 @@ public class HCatFileUtil {
 
   // regex of the form: ${column name}. Following characters are not allowed in column name:
   // whitespace characters, /, {, }, \
-  private static final Pattern customPathPattern = Pattern.compile("(\\$\\{)([^\\s/\\{\\}\\\\]+)(\\})");
-
+  public static final Pattern customPathPattern = Pattern.compile("(\\$\\{)([^\\s/\\{\\}\\\\]+)(\\})");
   // This method parses the custom dynamic path and replaces each occurrence
   // of column name within regex pattern with its corresponding value, if provided
   public static String resolveCustomPath(OutputJobInfo jobInfo,
@@ -98,18 +98,48 @@ public class HCatFileUtil {
   }
 
   public static void getPartKeyValuesForCustomLocation(Map<String, String> partSpec,
-      OutputJobInfo jobInfo, String partitionPath) {
-    // create matchers for custom path string as well as actual dynamic partition path created
-    Matcher customPathMatcher = customPathPattern.matcher(jobInfo.getCustomDynamicPath());
-    Matcher dynamicPathMatcher = customPathPattern.matcher(partitionPath);
+      OutputJobInfo jobInfo, String partitionPath, boolean isMagic) {
+    if (isMagic) {
+      URI tabLocURI;
+      if (jobInfo.getCustomDynamicRoot() != null && !jobInfo.getCustomDynamicRoot().isEmpty()) {
+        tabLocURI = new Path(jobInfo.getTableInfo().getTableLocation()+"/"+jobInfo.getCustomDynamicRoot()).toUri();
+      }
+      else {
+        tabLocURI = new Path(jobInfo.getTableInfo().getTableLocation()).toUri();
+      }
+      URI partURI = new Path(partitionPath).toUri();
+      URI relPath = tabLocURI.relativize(partURI);
+      StringBuffer sb = new StringBuffer();
+      Matcher m = customPathPattern.matcher(jobInfo.getCustomDynamicPath());
+      ArrayList<String> partColumns = new ArrayList<String>();
+      while (m.find()) {
+        m.appendReplacement(sb, "(.*)");
+        partColumns.add(m.group(2));
+      }
+      m.appendTail(sb);
+      String newPattern = sb.toString();
+      Pattern valExtractPattern = Pattern.compile(newPattern);
+      Matcher m2 = valExtractPattern.matcher(relPath.getPath());
+      if (m2.matches()) {
+        for (int i = 0; i < m2.groupCount(); i++) {
+          partSpec.put(partColumns.get(i), m2.group(i+1));
+        }
+      }
+      partSpec.putAll(jobInfo.getPartitionValues());
+    }
+    else {
+      // create matchers for custom path string as well as actual dynamic partition path created
+      Matcher customPathMatcher = customPathPattern.matcher(jobInfo.getCustomDynamicPath());
+      Matcher dynamicPathMatcher = customPathPattern.matcher(partitionPath);
 
     while (customPathMatcher.find() && dynamicPathMatcher.find()) {
       // get column name from custom path matcher and column value from dynamic path matcher
       partSpec.put(customPathMatcher.group(2), dynamicPathMatcher.group(2));
     }
 
-    // add any partition key values provided as part of job info
-    partSpec.putAll(jobInfo.getPartitionValues());
+      // add any partition key values provided as part of job info
+      partSpec.putAll(jobInfo.getPartitionValues());
+    }
   }
 
   public static void setCustomPath(String customPathFormat, OutputJobInfo jobInfo) {

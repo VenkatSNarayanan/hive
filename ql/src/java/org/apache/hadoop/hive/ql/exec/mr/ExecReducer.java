@@ -43,6 +43,7 @@ import org.apache.hadoop.mapred.Reducer;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
+import org.apache.hadoop.mapred.TaskAttemptID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,6 +87,8 @@ public class ExecReducer extends MapReduceBase implements Reducer {
 
   @Override
   public void configure(JobConf job) {
+    TaskAttemptID taskAttemptID = TaskAttemptID.forName(job.get("mapred.task.id"));
+
     rowObjectInspector = new ObjectInspector[Byte.MAX_VALUE];
     ObjectInspector[] valueObjectInspector = new ObjectInspector[Byte.MAX_VALUE];
     ObjectInspector keyObjectInspector;
@@ -127,6 +130,7 @@ public class ExecReducer extends MapReduceBase implements Reducer {
     }
 
     MapredContext.init(false, new JobConf(jc));
+    MapredContext.get().setTaskAttemptID(taskAttemptID);
 
     // initialize reduce operator tree
     try {

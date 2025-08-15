@@ -70,6 +70,7 @@ import org.apache.hadoop.hive.ql.optimizer.physical.AnnotateRunTimeStatsOptimize
 import org.apache.hadoop.hive.ql.optimizer.physical.MetadataOnlyOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.physical.NullScanOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.physical.PhysicalContext;
+import org.apache.hadoop.hive.ql.optimizer.physical.PathOutputCommitterResolver;
 import org.apache.hadoop.hive.ql.optimizer.physical.SparkCrossProductCheck;
 import org.apache.hadoop.hive.ql.optimizer.physical.SparkDynamicPartitionPruningResolver;
 import org.apache.hadoop.hive.ql.optimizer.physical.SparkMapJoinResolver;
@@ -612,6 +613,13 @@ public class SparkCompiler extends TaskCompiler {
     if (physicalCtx.getContext().getExplainAnalyze() != null) {
       new AnnotateRunTimeStatsOptimizer().resolve(physicalCtx);
     }
+
+    if (conf.getBoolVar(HiveConf.ConfVars.HIVE_BLOBSTORE_USE_OUTPUTCOMMITTER)) {
+      new PathOutputCommitterResolver().resolve(physicalCtx);
+    } else {
+      LOG.debug("Skipping S3A commit optimizer");
+    }
+
 
     PERF_LOGGER.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_OPTIMIZE_TASK_TREE);
     return;

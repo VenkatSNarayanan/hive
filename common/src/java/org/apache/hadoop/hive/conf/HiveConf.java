@@ -4423,7 +4423,13 @@ public class HiveConf extends Configuration {
             "This parameter enables a number of optimizations when running on blobstores:\n" +
             "(1) If hive.blobstore.use.blobstore.as.scratchdir is false, force the last Hive job to write to the blobstore.\n" +
             "This is a performance optimization that forces the final FileSinkOperator to write to the blobstore.\n" +
-            "See HIVE-15121 for details.");
+            "See HIVE-15121 for details."),
+
+    HIVE_BLOBSTORE_USE_OUTPUTCOMMITTER("hive.blobstore.use.output-committer", false, "Whether to " +
+            "use a custom PathOutputCommitter to commit data. For all the URIs specified in " +
+            "hive.blobstore.supported.schemes, Hive will honor the config " +
+            "mapreduce.outputcommitter.factory.scheme.[uri-scheme]. This overrides the behavior " +
+            "described in hive.blobstore.optimizations.enabled. See HIVE-16295 for details.");
 
     public final String varname;
     public final String altName;

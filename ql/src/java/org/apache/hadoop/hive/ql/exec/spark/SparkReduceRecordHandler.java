@@ -24,8 +24,6 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.ql.exec.MapredContext;
 import org.apache.hadoop.hive.ql.exec.Operator;
 import org.apache.hadoop.hive.ql.exec.OperatorUtils;
@@ -57,8 +55,12 @@ import org.apache.hadoop.io.DataOutputBuffer;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.OutputCollector;
 import org.apache.hadoop.mapred.Reporter;
+import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Preconditions;
 
@@ -121,6 +123,8 @@ public class SparkReduceRecordHandler extends SparkRecordHandler {
   public void init(JobConf job, OutputCollector output, Reporter reporter) throws Exception {
     perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_INIT_OPERATORS);
     super.init(job, output, reporter);
+
+    TaskAttemptID taskAttemptID = TaskAttemptID.forName(job.get("mapred.task.id"));
 
     rowObjectInspector = new ObjectInspector[Byte.MAX_VALUE];
     ObjectInspector[] valueObjectInspector = new ObjectInspector[Byte.MAX_VALUE];
@@ -218,6 +222,8 @@ public class SparkReduceRecordHandler extends SparkRecordHandler {
               Utilities.reduceFieldNameList, ois);
         }
       }
+      MapredContext.init(false, new JobConf(jc));
+      MapredContext.get().setTaskAttemptID(taskAttemptID);
     } catch (Exception e) {
       throw new RuntimeException(e);
     }

@@ -19,6 +19,7 @@ package org.apache.hadoop.hive.ql.metadata;
 
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.ql.exec.HiveDataCommitter;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.session.SessionState;
 import org.junit.BeforeClass;
@@ -83,7 +84,7 @@ public class TestHiveCopyFiles {
     FileSystem targetFs = targetPath.getFileSystem(hiveConf);
 
     try {
-      Hive.copyFiles(hiveConf, sourcePath, targetPath, targetFs, isSourceLocal, NO_ACID, false,null, false, false, false);
+      new HiveDataCommitter().copyFiles(hiveConf, sourcePath, targetPath, targetFs, isSourceLocal, NO_ACID, false,null, false, false, false);
     } catch (HiveException e) {
       e.printStackTrace();
       assertTrue("Hive.copyFiles() threw an unexpected exception.", false);
@@ -107,7 +108,7 @@ public class TestHiveCopyFiles {
     FileSystem targetFs = targetPath.getFileSystem(hiveConf);
 
     try {
-      Hive.copyFiles(hiveConf, sourcePath, targetPath, targetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
+      new HiveDataCommitter().copyFiles(hiveConf, sourcePath, targetPath, targetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
     } catch (HiveException e) {
       e.printStackTrace();
       assertTrue("Hive.copyFiles() threw an unexpected exception.", false);
@@ -127,7 +128,7 @@ public class TestHiveCopyFiles {
     sourceFolder.newFile("000001_0.gz");
 
     try {
-      Hive.copyFiles(hiveConf, sourcePath, targetPath, targetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
+      new HiveDataCommitter().copyFiles(hiveConf, sourcePath, targetPath, targetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
     } catch (HiveException e) {
       e.printStackTrace();
       assertTrue("Hive.copyFiles() threw an unexpected exception.", false);
@@ -158,7 +159,7 @@ public class TestHiveCopyFiles {
     Mockito.when(spyTargetFs.getUri()).thenReturn(URI.create("hdfs://" + targetPath.toUri().getPath()));
 
     try {
-      Hive.copyFiles(hiveConf, sourcePath, targetPath, spyTargetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
+      new HiveDataCommitter().copyFiles(hiveConf, sourcePath, targetPath, spyTargetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
     } catch (HiveException e) {
       e.printStackTrace();
       assertTrue("Hive.copyFiles() threw an unexpected exception.", false);
@@ -185,7 +186,7 @@ public class TestHiveCopyFiles {
     Mockito.when(spyTargetFs.getUri()).thenReturn(URI.create("hdfs://" + targetPath.toUri().getPath()));
 
     try {
-      Hive.copyFiles(hiveConf, sourcePath, targetPath, spyTargetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
+      new HiveDataCommitter().copyFiles(hiveConf, sourcePath, targetPath, spyTargetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
     } catch (HiveException e) {
       e.printStackTrace();
       assertTrue("Hive.copyFiles() threw an unexpected exception.", false);
@@ -205,7 +206,7 @@ public class TestHiveCopyFiles {
     sourceFolder.newFile("000001_0.gz");
 
     try {
-      Hive.copyFiles(hiveConf, sourcePath, targetPath, spyTargetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
+      new HiveDataCommitter().copyFiles(hiveConf, sourcePath, targetPath, spyTargetFs, isSourceLocal, NO_ACID, false, null, false, false, false);
     } catch (HiveException e) {
       e.printStackTrace();
       assertTrue("Hive.copyFiles() threw an unexpected exception.", false);

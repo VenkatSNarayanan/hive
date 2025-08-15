@@ -26,6 +26,7 @@ import java.util.List;
 
 import org.apache.hadoop.hive.common.classification.InterfaceAudience;
 import org.apache.hadoop.hive.common.classification.InterfaceStability;
+import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -73,6 +74,7 @@ public class MapredContext {
   private final List<Closeable> udfs;
 
   private Reporter reporter;
+  private TaskAttemptID taskAttemptID;
 
   protected MapredContext(boolean isMap, JobConf jobConf) {
     this.isMap = isMap;
@@ -104,6 +106,14 @@ public class MapredContext {
   public void setReporter(Reporter reporter) {
     this.reporter = reporter;
   }
+  public TaskAttemptID getTaskAttemptID() {
+    return this.taskAttemptID;
+  }
+
+  public void setTaskAttemptID(TaskAttemptID taskAttemptID) {
+    this.taskAttemptID = taskAttemptID;
+  }
+
 
   private void registerCloseable(Closeable closeable) {
     udfs.add(closeable);

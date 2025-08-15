@@ -44,6 +44,7 @@ import org.apache.hadoop.mapred.Mapper;
 import org.apache.hadoop.mapred.OutputCollector;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.util.StringUtils;
+import org.apache.hadoop.mapred.TaskAttemptID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -73,6 +74,8 @@ public class ExecMapper extends MapReduceBase implements Mapper {
 
   @Override
   public void configure(JobConf job) {
+    TaskAttemptID taskAttemptID = TaskAttemptID.forName(job.get("mapred.task.id"));
+
     execContext = new ExecMapperContext(job);
     Utilities.tryLoggingClassPaths(job, l4j);
     setDone(false);
@@ -100,6 +103,7 @@ public class ExecMapper extends MapReduceBase implements Mapper {
       execContext.setLocalWork(localWork);
 
       MapredContext.init(true, new JobConf(jc));
+      MapredContext.get().setTaskAttemptID(taskAttemptID);
 
       mo.passExecContext(execContext);
       mo.initializeLocalWork(jc);

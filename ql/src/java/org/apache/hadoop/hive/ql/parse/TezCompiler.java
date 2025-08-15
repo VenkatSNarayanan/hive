@@ -79,18 +79,7 @@ import org.apache.hadoop.hive.ql.optimizer.SetReducerParallelism;
 import org.apache.hadoop.hive.ql.optimizer.SharedWorkOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.correlation.ReduceSinkJoinDeDuplication;
 import org.apache.hadoop.hive.ql.optimizer.metainfo.annotation.AnnotateWithOpTraits;
-import org.apache.hadoop.hive.ql.optimizer.physical.AnnotateRunTimeStatsOptimizer;
-import org.apache.hadoop.hive.ql.optimizer.physical.CrossProductHandler;
-import org.apache.hadoop.hive.ql.optimizer.physical.LlapClusterStateForCompile;
-import org.apache.hadoop.hive.ql.optimizer.physical.LlapDecider;
-import org.apache.hadoop.hive.ql.optimizer.physical.LlapPreVectorizationPass;
-import org.apache.hadoop.hive.ql.optimizer.physical.MemoryDecider;
-import org.apache.hadoop.hive.ql.optimizer.physical.MetadataOnlyOptimizer;
-import org.apache.hadoop.hive.ql.optimizer.physical.NullScanOptimizer;
-import org.apache.hadoop.hive.ql.optimizer.physical.PhysicalContext;
-import org.apache.hadoop.hive.ql.optimizer.physical.SerializeFilter;
-import org.apache.hadoop.hive.ql.optimizer.physical.StageIDsRearranger;
-import org.apache.hadoop.hive.ql.optimizer.physical.Vectorizer;
+import org.apache.hadoop.hive.ql.optimizer.physical.*;
 import org.apache.hadoop.hive.ql.optimizer.stats.annotation.AnnotateWithStatistics;
 import org.apache.hadoop.hive.ql.plan.AggregationDesc;
 import org.apache.hadoop.hive.ql.plan.BaseWork;
@@ -680,6 +669,10 @@ public class TezCompiler extends TaskCompiler {
       physicalCtx = new Vectorizer().resolve(physicalCtx);
     } else {
       LOG.debug("Skipping vectorization");
+    }
+
+    if (conf.getBoolVar(HiveConf.ConfVars.HIVE_BLOBSTORE_USE_OUTPUTCOMMITTER)) {
+      physicalCtx = new PathOutputCommitterResolver().resolve(physicalCtx);
     }
 
     if (!"none".equalsIgnoreCase(conf.getVar(HiveConf.ConfVars.HIVESTAGEIDREARRANGE))) {

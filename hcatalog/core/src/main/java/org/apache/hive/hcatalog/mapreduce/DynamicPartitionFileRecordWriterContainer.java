@@ -20,12 +20,17 @@
 package org.apache.hive.hcatalog.mapreduce;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.permission.FsAction;
+import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.fs.s3a.commit.CommitUtils;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.serde2.AbstractSerDe;
 import org.apache.hadoop.hive.serde2.SerDeException;
@@ -37,11 +42,11 @@ import org.apache.hadoop.mapred.RecordWriter;
 import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.OutputCommitter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
-import org.apache.hadoop.mapreduce.lib.output.FileOutputCommitter;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hive.hcatalog.common.ErrorType;
 import org.apache.hive.hcatalog.common.HCatException;
+import org.apache.hive.hcatalog.common.HCatUtil;
 import org.apache.hive.hcatalog.data.HCatRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -115,6 +120,10 @@ class DynamicPartitionFileRecordWriterContainer extends FileRecordWriterContaine
 
       @Override
       public void commitTask(TaskAttemptContext context) throws IOException {
+        List<Path> outputPaths = new ArrayList<>();
+        FileSystem fs = null;
+        boolean isMagic = false;
+        Path manifestPath = null;
         for (Map.Entry<String, OutputJobInfo> outputJobInfoEntry : dynamicOutputJobInfo.entrySet()) {
           String dynKey = outputJobInfoEntry.getKey();
           OutputJobInfo outputJobInfo = outputJobInfoEntry.getValue();
@@ -123,9 +132,27 @@ class DynamicPartitionFileRecordWriterContainer extends FileRecordWriterContaine
           OutputCommitter dynCommitter = baseDynamicCommitters.get(dynKey);
           if (dynCommitter.needsTaskCommit(dynContext)) {
             dynCommitter.commitTask(dynContext);
-          }
-          else {
+            if (dynCommitter.getClass() == org.apache.hadoop.fs.s3a.commit.magic.mapred.MagicS3GuardCommitter.class) {
+              isMagic = true;
+              manifestPath = new Path(outputJobInfoEntry.getValue().getTableInfo().getTableLocation(), "manifest");
+              Path outputPath = ((org.apache.hadoop.fs.s3a.commit.magic.mapred.MagicS3GuardCommitter) dynCommitter).getOutputPath();
+              outputPaths.add(outputPath);
+              fs = CommitUtils.getS3AFileSystem(outputPath, dynContext.getConfiguration(), true);
+            }
+          } else {
             LOG.info("Skipping commitTask() for " + outputJobInfo.getLocation());
+          }
+        }
+        if (isMagic) {
+          StringBuilder sb = new StringBuilder();
+          for (Path path : outputPaths) {
+            sb.append(path.toString()).append("\n");
+          }
+          OutputStream os = fs.create(manifestPath);
+          try {
+            os.write(sb.toString().getBytes());
+          } finally {
+            os.close();
           }
         }
       }
@@ -200,9 +227,8 @@ class DynamicPartitionFileRecordWriterContainer extends FileRecordWriterContaine
 
       // Set temp location.
       currTaskContext.getConfiguration().set(
-          "mapred.work.output.dir",
-          new FileOutputCommitter(new Path(localJobInfo.getLocation()), currTaskContext)
-              .getWorkPath().toString());
+              "mapred.work.output.dir",
+              HCatUtil.getCommitterWorkPath(new Path(localJobInfo.getLocation()), currTaskContext));
 
       // Set up task.
       baseOutputCommitter.setupTask(currTaskContext);

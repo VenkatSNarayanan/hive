@@ -73,6 +73,7 @@ public class PerfLogger {
   public static final String TEZ_GET_SESSION = "TezGetSession";
   public static final String SAVE_TO_RESULTS_CACHE = "saveToResultsCache";
 
+  public static final String FILE_MOVES = "FileMoves";
   public static final String SPARK_SUBMIT_TO_RUNNING = "SparkSubmitToRunning";
   public static final String SPARK_BUILD_PLAN = "SparkBuildPlan";
   public static final String SPARK_BUILD_RDD_GRAPH = "SparkBuildRDDGraph";

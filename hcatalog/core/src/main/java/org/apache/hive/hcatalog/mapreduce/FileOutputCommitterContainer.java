@@ -19,7 +19,9 @@
 
 package org.apache.hive.hcatalog.mapreduce;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -49,6 +51,7 @@ import org.apache.hadoop.hive.ql.metadata.HiveStorageHandler;
 import org.apache.hadoop.hive.ql.metadata.Table;
 import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapred.OutputCommitter;
 import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.JobStatus.State;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
@@ -60,9 +63,12 @@ import org.apache.hive.hcatalog.data.schema.HCatFieldSchema;
 import org.apache.hive.hcatalog.data.schema.HCatSchema;
 import org.apache.hive.hcatalog.data.schema.HCatSchemaUtils;
 import org.apache.hive.hcatalog.har.HarOutputCommitterPostProcessor;
+import org.apache.hive.hcatalog.mapreduce.s3.commit.magic.MagicS3GuardCommitter;
 import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static org.apache.hive.hcatalog.mapreduce.HCatFileUtil.customPathPattern;
 
 /**
  * Part of the FileOutput*Container classes
@@ -75,6 +81,8 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
 
   static final String DYNTEMP_DIR_NAME = "_DYN";
   static final String SCRATCH_DIR_NAME = "_SCRATCH";
+
+  private final boolean isMagic; //tracks whether the base committer this is wrapping is an instance of the S3MagicGuardCommitter
   private static final String APPEND_SUFFIX = "_a_";
   private static final int APPEND_COUNTER_WARN_THRESHOLD = 1000;
   private final int maxAppendAttempts;
@@ -117,6 +125,18 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
     }
 
     this.maxAppendAttempts = context.getConfiguration().getInt(HCatConstants.HCAT_APPEND_LIMIT, APPEND_COUNTER_WARN_THRESHOLD);
+    String committerClassName = context.getConfiguration().get("mapred.output.committer.class");
+    try {
+      Class committerClass = Class.forName(committerClassName);
+      if (committerClass == org.apache.hadoop.fs.s3a.commit.magic.mapred.MagicS3GuardCommitter.class) {
+        isMagic = true;
+      }
+      else {
+        isMagic = false;
+      }
+    } catch (Exception e) {
+      throw new IOException("Could not load configured mapred.output.committer.class", e);
+    }
   }
 
   @Override
@@ -241,8 +261,9 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
       // Commit each partition so it gets moved out of the job work
       // dir
       for (JobContext context : contextDiscoveredByPath.values()) {
-        new JobConf(context.getConfiguration())
-            .getOutputCommitter().commitJob(context);
+        OutputCommitter oc = new JobConf(context.getConfiguration())
+                .getOutputCommitter();
+        oc.commitJob(context);
       }
     }
     if (getBaseOutputCommitter() != null && !dynamicPartitioningUsed) {
@@ -286,8 +307,14 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
           && jobInfo.getCustomDynamicRoot().length() > 0) {
         parentPath = new Path(parentPath, jobInfo.getCustomDynamicRoot()).toString();
       }
-      Path ptnRoot = new Path(parentPath, DYNTEMP_DIR_NAME +
-          conf.get(HCatConstants.HCAT_DYNAMIC_PTN_JOBID));
+      Path ptnRoot = null;
+      if (!isMagic) { //this method is used only in abort codepaths and so has not been tested
+        ptnRoot = new Path(parentPath, DYNTEMP_DIR_NAME +
+                conf.get(HCatConstants.HCAT_DYNAMIC_PTN_JOBID));
+      }
+      else {
+        ptnRoot = new Path(parentPath);
+      }
       ptnRootLocation = ptnRoot.toString();
     }
     return ptnRootLocation;
@@ -363,8 +390,13 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
       // Now, we need to de-scratchify this location - i.e., get rid of any
       // _SCRATCH[\d].?[\d]+ from the location.
       String jobLocation = jobInfo.getLocation();
-      String finalLocn = jobLocation.replaceAll(Path.SEPARATOR + SCRATCH_DIR_NAME + "\\d\\.?\\d+","");
-      partPath = new Path(finalLocn);
+      if (!isMagic) {
+        String finalLocn = jobLocation.replaceAll(Path.SEPARATOR + SCRATCH_DIR_NAME + "\\d\\.?\\d+", "");
+        partPath = new Path(finalLocn);
+      }
+      else {
+        partPath = new Path(jobLocation);
+      }
     } else {
       partPath = new Path(partLocnRoot);
       int i = 0;
@@ -379,9 +411,13 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
 
     // Apply the group and permissions to the leaf partition and files.
     // Need not bother in case of HDFS as permission is taken care of by setting UMask
-    fs.mkdirs(partPath); // Attempt to make the path in case it does not exist before we check
-    if (!ShimLoader.getHadoopShims().getHCatShim().isFileInHDFS(fs, partPath)) {
-      applyGroupAndPerms(fs, partPath, perms, grpName, true);
+    if (!isMagic) { //in case of magic committer the dirs are created by the committer since we give it the final destination
+      //This partPath would be the indicator dir path in the case of dyn partitions with custom patterns with magic committer
+      //which we do not wish to re-create since they should have been used and deleted already
+      fs.mkdirs(partPath); // Attempt to make the path in case it does not exist before we check
+      if (!ShimLoader.getHadoopShims().getHCatShim().isFileInHDFS(fs, partPath)) {
+        applyGroupAndPerms(fs, partPath, perms, grpName, true);
+      }
     }
 
     // Set the location in the StorageDescriptor
@@ -704,6 +740,10 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
       // construct a path pattern (e.g., /*/*) to find all dynamically generated paths
       String dynPathSpec = loadPath.toUri().getPath();
       dynPathSpec = dynPathSpec.replaceAll("__HIVE_DEFAULT_PARTITION__", "*");
+      String manifestPath = null;
+      if (isMagic) {
+        manifestPath = jobInfo.getTableInfo().getTableLocation()+"/manifest";
+      }
 
       //      LOG.info("Searching for "+dynPathSpec);
       Path pathPattern = new Path(dynPathSpec);
@@ -728,24 +768,62 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
               + HiveConf.ConfVars.DYNAMICPARTITIONMAXPARTS.varname
               + "] if needed.");
         }
-
-        for (FileStatus st : status) {
-          LinkedHashMap<String, String> fullPartSpec = new LinkedHashMap<String, String>();
-          if (!customDynamicLocationUsed) {
-            Warehouse.makeSpecFromName(fullPartSpec, st.getPath(), null);
-          } else {
-            HCatFileUtil.getPartKeyValuesForCustomLocation(fullPartSpec, jobInfo,
-                st.getPath().toString());
+        if (isMagic) { //code repetition between branches here, need to see how to rewrite to minimize it
+          BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(new Path(manifestPath))));
+          while (br.ready()) {
+            String line = br.readLine();
+            LinkedHashMap<String, String> fullPartSpec = new LinkedHashMap<String, String>();
+            if (customPathPattern.matcher(line).find()) {
+              if (!customDynamicLocationUsed) {
+                Warehouse.makeSpecFromName(fullPartSpec, new Path(line), null);
+              } else {
+                HCatFileUtil.getPartKeyValuesForCustomLocation(fullPartSpec, jobInfo,
+                        line, true);
+              }
+              partitionsDiscoveredByPath.put(line, fullPartSpec);
+              JobConf jobConf = (JobConf) context.getConfiguration();
+              JobContext currContext = HCatMapRedUtil.createJobContext(
+                      jobConf,
+                      context.getJobID(),
+                      InternalUtil.createReporter(HCatMapRedUtil.createTaskAttemptContext(jobConf,
+                              ShimLoader.getHadoopShims().getHCatShim().createTaskAttemptID())));
+              HCatOutputFormat.configureOutputStorageHandler(currContext, jobInfo, fullPartSpec);
+              contextDiscoveredByPath.put(line, currContext);
+            } else if (!customDynamicLocationUsed) {
+              Warehouse.makeSpecFromName(fullPartSpec, new Path(line), null);
+              partitionsDiscoveredByPath.put(line, fullPartSpec);
+              JobConf jobConf = (JobConf) context.getConfiguration();
+              JobContext currContext = HCatMapRedUtil.createJobContext(
+                      jobConf,
+                      context.getJobID(),
+                      InternalUtil.createReporter(HCatMapRedUtil.createTaskAttemptContext(jobConf,
+                              ShimLoader.getHadoopShims().getHCatShim().createTaskAttemptID())));
+              HCatOutputFormat.configureOutputStorageHandler(currContext, jobInfo, fullPartSpec);
+              contextDiscoveredByPath.put(line, currContext);
+            }
           }
-          partitionsDiscoveredByPath.put(st.getPath().toString(), fullPartSpec);
-          JobConf jobConf = (JobConf)context.getConfiguration();
-          JobContext currContext = HCatMapRedUtil.createJobContext(
-            jobConf,
-            context.getJobID(),
-            InternalUtil.createReporter(HCatMapRedUtil.createTaskAttemptContext(jobConf,
-              ShimLoader.getHadoopShims().getHCatShim().createTaskAttemptID())));
-          HCatOutputFormat.configureOutputStorageHandler(currContext, jobInfo, fullPartSpec);
-          contextDiscoveredByPath.put(st.getPath().toString(), currContext);
+          br.close();
+          fs.delete(new Path(manifestPath),true);
+        }
+        else {
+          for (FileStatus st : status) {
+            LinkedHashMap<String, String> fullPartSpec = new LinkedHashMap<String, String>();
+            if (!customDynamicLocationUsed) {
+              Warehouse.makeSpecFromName(fullPartSpec, st.getPath(), null);
+            } else {
+              HCatFileUtil.getPartKeyValuesForCustomLocation(fullPartSpec, jobInfo,
+                      st.getPath().toString(), false);
+            }
+            partitionsDiscoveredByPath.put(st.getPath().toString(), fullPartSpec);
+            JobConf jobConf = (JobConf)context.getConfiguration();
+            JobContext currContext = HCatMapRedUtil.createJobContext(
+                    jobConf,
+                    context.getJobID(),
+                    InternalUtil.createReporter(HCatMapRedUtil.createTaskAttemptContext(jobConf,
+                            ShimLoader.getHadoopShims().getHCatShim().createTaskAttemptID())));
+            HCatOutputFormat.configureOutputStorageHandler(currContext, jobInfo, fullPartSpec);
+            contextDiscoveredByPath.put(st.getPath().toString(), currContext);
+          }
         }
       }
 
@@ -779,7 +857,9 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
         // Move data from temp directory the actual table directory
         // No metastore operation required.
         Path src = new Path(jobInfo.getLocation());
-        moveTaskOutputs(fs, src, src, tblPath, false, table.isImmutable());
+        if (!isMagic) {
+          moveTaskOutputs(fs, src, src, tblPath, false, table.isImmutable());
+        }
         if (!src.equals(tblPath)) {
           fs.delete(src, true);
         }
@@ -844,12 +924,14 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
           // check here for each dir we're copying out, to see if it
           // already exists, error out if so.
           // Also, treat dyn-writes as writes to immutable tables.
-          moveTaskOutputs(fs, src, src, tblPath, true, true); // dryRun = true, immutable = true
-          moveTaskOutputs(fs, src, src, tblPath, false, true);
+          if (!isMagic) {
+            moveTaskOutputs(fs, src, src, tblPath, true, true); // dryRun = true, immutable = true
+            moveTaskOutputs(fs, src, src, tblPath, false, true);
+          }
           if (!src.equals(tblPath)){
             fs.delete(src, true);
           }
-        } else {
+        } else if (!isMagic) {
           moveCustomLocationTaskOutputs(fs, table, hiveConf);
         }
         try {
@@ -885,15 +967,17 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
             Partition p = partitionsToAdd.get(0);
             Path src = new Path(jobInfo.getLocation());
             Path dest = new Path(p.getSd().getLocation());
-            moveTaskOutputs(fs, src, src, dest, true, table.isImmutable());
-            moveTaskOutputs(fs,src,src,dest,false,table.isImmutable());
-            if (!src.equals(dest)){
-              if (src.toString().matches(".*" + Path.SEPARATOR + SCRATCH_DIR_NAME + "\\d\\.?\\d+.*")){
-                // src is scratch directory, need to trim the part key value pairs from path
-                String diff = StringUtils.difference(src.toString(), dest.toString());
-                fs.delete(new Path(StringUtils.substringBefore(src.toString(), diff)), true);
-              } else {
-                fs.delete(src, true);
+            if (!isMagic) {
+              moveTaskOutputs(fs, src, src, dest, true, table.isImmutable());
+              moveTaskOutputs(fs, src, src, dest, false, table.isImmutable());
+              if (!src.equals(dest)) {
+                if (src.toString().matches(".*" + Path.SEPARATOR + SCRATCH_DIR_NAME + "\\d\\.?\\d+.*")) {
+                  // src is scratch directory, need to trim the part key value pairs from path
+                  String diff = StringUtils.difference(src.toString(), dest.toString());
+                  fs.delete(new Path(StringUtils.substringBefore(src.toString(), diff)), true);
+                } else {
+                  fs.delete(src, true);
+                }
               }
             }
 
@@ -932,15 +1016,17 @@ class FileOutputCommitterContainer extends OutputCommitterContainer {
 
           } else {
             // Dynamic partitioning usecase
-            if (!customDynamicLocationUsed) {
-              Path src = new Path(ptnRootLocation);
-              moveTaskOutputs(fs, src, src, tblPath, true, true); // dryRun = true, immutable = true
-              moveTaskOutputs(fs, src, src, tblPath, false, true);
-              if (!src.equals(tblPath)){
-                fs.delete(src, true);
+            if (!isMagic) {
+              if (!customDynamicLocationUsed) {
+                Path src = new Path(ptnRootLocation);
+                moveTaskOutputs(fs, src, src, tblPath, true, true); // dryRun = true, immutable = true
+                moveTaskOutputs(fs, src, src, tblPath, false, true);
+                if (!src.equals(tblPath)) {
+                  fs.delete(src, true);
+                }
+              } else {
+                moveCustomLocationTaskOutputs(fs, table, hiveConf);
               }
-            } else {
-              moveCustomLocationTaskOutputs(fs, table, hiveConf);
             }
             client.add_partitions(partitionsToAdd);
             partitionsAdded = partitionsToAdd;

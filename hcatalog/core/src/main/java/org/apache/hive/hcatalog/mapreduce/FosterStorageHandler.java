@@ -39,6 +39,7 @@ import org.apache.hive.hcatalog.common.HCatConstants;
 import org.apache.hive.hcatalog.common.HCatUtil;
 import org.apache.hive.hcatalog.data.schema.HCatFieldSchema;
 import org.apache.hive.hcatalog.data.schema.HCatSchema;
+import org.apache.hive.hcatalog.mapreduce.s3.commit.magic.MagicS3GuardCommitter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -151,6 +152,15 @@ public class FosterStorageHandler extends DefaultStorageHandler {
         HCatUtil.deserialize(tableDesc.getJobProperties().get(
           HCatConstants.HCAT_KEY_OUTPUT_INFO));
       String parentPath = jobInfo.getTableInfo().getTableLocation();
+      boolean isMagic = false;
+      try {
+        if (Class.forName(tableDesc.getJobProperties().get("mapred.output.committer.class")) == org.apache.hadoop.fs.s3a.commit.magic.mapred.MagicS3GuardCommitter.class) {
+          //Magic committer supplies its own working directory so we do not need Hive to create one
+          isMagic = true;
+        }
+      } catch (Exception e) {
+        throw new RuntimeException("Could not instantiate mapred.output.committer.class");
+      }
       String dynHash = tableDesc.getJobProperties().get(
         HCatConstants.HCAT_DYNAMIC_PTN_JOBID);
       String idHash = tableDesc.getJobProperties().get(
@@ -165,9 +175,13 @@ public class FosterStorageHandler extends DefaultStorageHandler {
             && jobInfo.getCustomDynamicRoot().length() > 0) {
           parentPath = new Path(parentPath, jobInfo.getCustomDynamicRoot()).toString();
         }
-        parentPath = new Path(parentPath, FileOutputCommitterContainer.DYNTEMP_DIR_NAME + dynHash).toString();
+        if (!isMagic) {
+          parentPath = new Path(parentPath, FileOutputCommitterContainer.DYNTEMP_DIR_NAME + dynHash).toString();
+        }
       } else {
-        parentPath = new Path(parentPath,FileOutputCommitterContainer.SCRATCH_DIR_NAME + idHash).toString();
+        if (!isMagic) {
+          parentPath = new Path(parentPath,FileOutputCommitterContainer.SCRATCH_DIR_NAME + idHash).toString();
+        }
       }
 
       String outputLocation;
@@ -178,7 +192,12 @@ public class FosterStorageHandler extends DefaultStorageHandler {
           && jobInfo.getCustomDynamicPath().length() > 0) {
         // dynamic partitioning with custom path; resolve the custom path
         // using partition column values
-        outputLocation = HCatFileUtil.resolveCustomPath(jobInfo, null, true);
+        if (isMagic) {
+          outputLocation = HCatFileUtil.resolveCustomPath(jobInfo, null, false);
+        }
+        else {
+          outputLocation = HCatFileUtil.resolveCustomPath(jobInfo, null, true);
+        }
       } else if ((dynHash == null)
            && Boolean.parseBoolean((String)tableDesc.getProperties().get("EXTERNAL"))
            && jobInfo.getLocation() != null && jobInfo.getLocation().length() > 0) {

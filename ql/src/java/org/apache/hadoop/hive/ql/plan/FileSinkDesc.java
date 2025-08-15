@@ -63,6 +63,8 @@ public class FileSinkDesc extends AbstractOperatorDesc implements IStatsGatherDe
   private DynamicPartitionCtx dpCtx;
   private String staticSpec; // static partition spec ends with a '/'
   private boolean gatherStats;
+  private String targetDirName;
+  private boolean hasOutputCommitter;
 
   // Consider a query like:
   // insert overwrite table T3 select ... from T1 join T2 on T1.key = T2.key;
@@ -592,6 +594,14 @@ public class FileSinkDesc extends AbstractOperatorDesc implements IStatsGatherDe
     return isInsertOverwrite;
   }
 
+  public String getTargetDirName() {
+    return this.targetDirName;
+  }
+
+  public void setTargetDirName(String targetDirName) {
+    this.targetDirName = targetDirName;
+  }
+
   @Override
   public boolean isSame(OperatorDesc other) {
     if (getClass().getName().equals(other.getClass().getName())) {
@@ -608,6 +618,14 @@ public class FileSinkDesc extends AbstractOperatorDesc implements IStatsGatherDe
           Objects.equals(getStatsAggPrefix(), otherDesc.getStatsAggPrefix());
     }
     return false;
+  }
+
+  public void setHasOutputCommitter(boolean hasOutputCommitter) {
+    this.hasOutputCommitter = hasOutputCommitter;
+  }
+
+  public boolean getHasOutputCommitter() {
+    return this.hasOutputCommitter;
   }
 
 }

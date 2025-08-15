@@ -7268,7 +7268,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
 
       boolean isNonNativeTable = dest_tab.isNonNative();
       isMmTable = AcidUtils.isInsertOnlyTable(dest_tab.getParameters());
-      if (isNonNativeTable || isMmTable) {
+      if (isNonNativeTable || isMmTable || conf.getBoolVar(ConfVars.HIVE_BLOBSTORE_USE_OUTPUTCOMMITTER)) {
         queryTmpdir = dest_path;
       } else {
         queryTmpdir = ctx.getTempDirForFinalJobPath(dest_path);
